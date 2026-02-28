@@ -6,6 +6,9 @@
 #include <sys/wait.h>
 #include <termios.h> // termios, TCSANOW, ECHO, ICANON
 #include <unistd.h>
+
+#include <fcntl.h>
+
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -323,6 +326,126 @@ int process_command(struct command_t *command) {
     }
   }
 
+
+  if(command->next != NULL){
+	int fd[2];
+	pipe(fd);
+
+	pid_t pid1 = fork();
+
+	if(pid1 == 0){
+		dup2(fd[1], STDOUT_FILENO);
+		close(fd[0]);
+		close(fd[1]);
+
+
+		if(command->redirects[0]){
+			int f = open(command->redirects[0], O_RDONLY);
+			if (f < 0){
+				perror("open"); exit(1);
+			}
+			dup2(f, STDIN_FILENO);
+			close(f);
+		}
+
+		char *path = strdup(getenv("PATH"));
+		char *directory = strtok(path, ":");
+
+		while(directory){
+			char full[1024];
+			strcpy(full, directory);
+        		strcat(full, "/");
+		        strcat(full, command->name);
+
+
+        		if(access(full, X_OK) == 0){
+           			execv(full, command->args);
+           			perror("execv failed");
+           			exit(1);
+        		}
+
+        		directory = strtok(NULL, ":");
+		}
+		free(path);
+		printf("-%s: %s: command not found\n", sysname, command->name);
+ 		exit(127);
+
+	}
+	pid_t pid2 = fork();
+	if(pid2 == 0){
+		dup2(fd[0], STDIN_FILENO);
+		close(fd[1]);
+		close(fd[0]);
+
+
+		if(command->next->redirects[0]){
+        		int fd = open(command->next->redirects[0], O_RDONLY);
+        		if(fd < 0){
+                		perror("Failed to open file"); exit(1);
+        		}
+        		dup2(fd, STDIN_FILENO);
+        		close(fd);
+    		}
+
+		if(command->next->redirects[2]){ 
+        		int f = open(command->next->redirects[2], O_WRONLY | O_CREAT | O_APPEND , 0644);
+        		if(f < 0){ 
+                		perror("Failed to open file"); exit(1);
+        		}
+       			dup2(f, STDOUT_FILENO);
+        		close(f);
+    		}
+
+               	else if(command->next->redirects[1]){
+        		int f = open(command->next->redirects[1], O_WRONLY | O_CREAT | O_TRUNC , 0644);
+        		if(f < 0){
+                		perror("Failed to open file"); exit(1);
+        		}
+        		dup2(f, STDOUT_FILENO);
+        		close(f);
+    		}
+
+		char *path = strdup(getenv("PATH"));
+                char *directory = strtok(path, ":");
+
+                while(directory){
+                        char full[1024];
+                        strcpy(full, directory);
+                        strcat(full, "/");
+                        strcat(full, command->next->name);
+
+
+                        if(access(full, X_OK) == 0){
+                                execv(full, command->next->args);
+                                perror("execv failed");
+                                exit(1);
+                        }
+
+                        directory = strtok(NULL, ":");
+                }
+                free(path);
+                printf("-%s: %s: command not found\n", sysname, command->name);
+                exit(127);
+
+
+
+	}
+
+	close(fd[0]);
+	close(fd[1]);
+
+	if(!command->background){
+		waitpid(pid1, NULL, 0);
+		waitpid(pid2, NULL, 0);
+	}else{
+		printf("Background pid: %d %d\n", pid1, pid2);
+	}
+	return SUCCESS;
+  }
+
+
+
+
   pid_t pid = fork();
   if (pid == 0) // child
   {
@@ -337,6 +460,36 @@ int process_command(struct command_t *command) {
     // TODO: do your own exec with path resolving using execv()
     // do so by replacing the execvp call below
     //execvp(command->name, command->args); // exec+args+path
+
+    if(command->redirects[0]){
+	int fd = open(command->redirects[0], O_RDONLY);
+	if(fd < 0){
+		perror("Failed to open file"); exit(1);
+	}
+	dup2(fd, STDIN_FILENO);
+	close(fd);
+
+    }
+
+    if(command->redirects[2]){ 
+        int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND , 0644);
+        if(fd < 0){ 
+                perror("Failed to open file"); exit(1);
+        }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+
+
+    else if(command->redirects[1]){
+	int fd = open(command->redirects[1], O_WRONLY | O_CREAT | O_TRUNC , 0644);
+	if(fd < 0){
+		perror("Failed to open file"); exit(1);
+        }
+	dup2(fd, STDOUT_FILENO);
+	close(fd);
+    }
+
 
     char *path_env = getenv("PATH");
     char *path_copy = strdup(path_env);
@@ -358,7 +511,7 @@ int process_command(struct command_t *command) {
         directory = strtok(NULL, ":");
 
     }
-
+    free(path_copy);
     printf("-%s: %s: command not found\n", sysname, command->name);
     exit(127);
   } else {
