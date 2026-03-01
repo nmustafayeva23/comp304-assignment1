@@ -9,6 +9,13 @@
 
 #include <fcntl.h>
 
+#include <dirent.h>
+#include <sys/stat.h>
+#include <time.h>
+
+#define MAX_FILES 1000
+#define VISITED_N 3
+
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -26,6 +33,12 @@ struct command_t {
   char *redirects[3];     // in/out redirection
   struct command_t *next; // for piping
 };
+
+struct file_info {
+  char *name;
+  time_t mtime;
+};
+
 
 /**
  * Prints a command struct
@@ -309,6 +322,114 @@ int prompt(struct command_t *command) {
   return SUCCESS;
 }
 
+void command_cut(struct command_t *command){
+  char delimiter = '\t';
+  int fields[1000];
+  int field_count = 0;
+
+  for(int i =1; i < command->arg_count - 1; i++){
+        if(strcmp(command->args[i], "-d") == 0 || strcmp(command->args[i], "--delimiter") == 0){
+                delimiter = command->args[i+1][0];
+                i++;
+        }else if (strcmp(command->args[i], "-f") == 0 || strcmp(command->args[i], "--fields") == 0){
+                char *token = strtok(command->args[i + 1], ",");
+                while(token != NULL){
+                        fields[field_count++] = atoi(token);
+                        token = strtok(NULL, ",");
+                }
+                i++;
+        }
+  }
+  char line[4096];
+  while(fgets(line, sizeof(line), stdin)){
+        char *tokens[1000];
+        int count = 0;
+
+        char *ptr = strtok(line, &delimiter);
+        while(ptr != NULL){
+                tokens[count++] = ptr;
+                ptr = strtok(NULL, &delimiter);
+        }
+        for(int i = 0; i < field_count; i++){
+                int idx = fields[i] - 1;
+                if(idx < count){
+                        printf("%s", tokens[idx]);
+                        if( i !=  field_count - 1){
+                                printf("%c", delimiter);
+                        }
+                }
+        }
+        printf("\n");
+  }
+}
+
+
+int compare(const void *a, const void *b){
+  struct file_info *fa = (struct file_info *)a;
+  struct file_info *fb = (struct file_info *)b;
+  return (fb->mtime - fa->mtime);
+
+}
+
+
+void command_recent(struct command_t *command){
+
+  const char *directory_path;
+  if(command->arg_count >= 2){
+	directory_path = command->args[1];
+  }else{
+	directory_path = ".";
+  }
+
+  DIR *directory = opendir(directory_path);
+  if(!directory){
+	perror("Failed");
+	return;
+  }
+
+  struct dirent *entry;
+  struct file_info files[MAX_FILES];
+  int count =0;
+
+  while((entry = readdir(directory)) != NULL && count < MAX_FILES){
+	if(entry->d_type != DT_REG){
+		continue;
+	}
+	char full_path[1024];
+	snprintf(full_path, sizeof(full_path), "%s/%s", directory_path, entry->d_name);
+
+	struct stat st;
+	if (stat(full_path, &st) == -1){ continue;}
+
+	files[count].name = strdup(entry->d_name);
+	files[count].mtime = st.st_mtime;
+	count++;
+
+  }
+  closedir(directory);
+
+  if(count == 0){
+	printf("No files found in %s\n", directory_path);
+	return;
+  }
+  qsort(files, count, sizeof(struct file_info), compare);
+
+  int N = VISITED_N;
+  if (count < N){
+	N = count;
+  }
+
+  printf("The most recent files in %s:\n", directory_path);
+  for(int i = 0; i < N; i++){
+	char timebuff[64];
+	struct tm *tm_info = localtime(&files[i].mtime);
+	strftime(timebuff, sizeof(timebuff), "%Y-%m-%d %H:%M", tm_info);
+	printf("%d. %s\tModified: %s\n", i + 1, files[i].name, timebuff);
+	free(files[i].name);
+  }
+}
+
+
 int process_command(struct command_t *command) {
   int r;
   if (strcmp(command->name, "") == 0)
@@ -325,7 +446,15 @@ int process_command(struct command_t *command) {
       return SUCCESS;
     }
   }
+  if(strcmp(command->name, "cut") == 0){
+	command_cut(command);
+	return SUCCESS;
+  }
 
+  if(strcmp(command->name, "recent") == 0){
+	command_recent(command);
+	return SUCCESS;
+  }
 
   if(command->next != NULL){
 	int fd[2];
