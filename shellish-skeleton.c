@@ -323,7 +323,7 @@ int prompt(struct command_t *command) {
 }
 
 void command_cut(struct command_t *command){
-  char delimiter = '\t';
+  char delimiter = '\t'; //set default delimiter as tab 
   int fields[1000];
   int field_count = 0;
 
@@ -341,15 +341,20 @@ void command_cut(struct command_t *command){
         }
   }
   char line[4096];
+
+  //read each line from standard input
   while(fgets(line, sizeof(line), stdin)){
         char *tokens[1000];
         int count = 0;
 
+	//split the line using the delimiter 
         char *ptr = strtok(line, &delimiter);
         while(ptr != NULL){
                 tokens[count++] = ptr;
                 ptr = strtok(NULL, &delimiter);
         }
+
+	//print the needed fields
         for(int i = 0; i < field_count; i++){
                 int idx = fields[i] - 1;
                 if(idx < count){
@@ -371,9 +376,10 @@ int compare(const void *a, const void *b){
 
 }
 
-
+//lists the most recent 3 visited files in a given directory
 void command_recent(struct command_t *command){
 
+  //check if a directory is provided. if yes, then proceed
   const char *directory_path;
   if(command->arg_count >= 2){
 	directory_path = command->args[1];
@@ -381,6 +387,7 @@ void command_recent(struct command_t *command){
 	directory_path = ".";
   }
 
+  //open the directory
   DIR *directory = opendir(directory_path);
   if(!directory){
 	perror("Failed");
@@ -392,7 +399,7 @@ void command_recent(struct command_t *command){
   int count =0;
 
   while((entry = readdir(directory)) != NULL && count < MAX_FILES){
-	if(entry->d_type != DT_REG){
+	if(entry->d_type != DT_REG){ //skip nonregular files such as directories and etc
 		continue;
 	}
 	char full_path[1024];
@@ -401,6 +408,7 @@ void command_recent(struct command_t *command){
 	struct stat st;
 	if (stat(full_path, &st) == -1){ continue;}
 
+	//store file name and modification time
 	files[count].name = strdup(entry->d_name);
 	files[count].mtime = st.st_mtime;
 	count++;
@@ -412,6 +420,7 @@ void command_recent(struct command_t *command){
 	printf("No files found in %s\n", directory_path);
 	return;
   }
+  //sort  files by modification time using compare() function
   qsort(files, count, sizeof(struct file_info), compare);
 
   int N = VISITED_N;
@@ -590,6 +599,8 @@ int process_command(struct command_t *command) {
     // do so by replacing the execvp call below
     //execvp(command->name, command->args); // exec+args+path
 
+
+    //input redirection
     if(command->redirects[0]){
 	int fd = open(command->redirects[0], O_RDONLY);
 	if(fd < 0){
@@ -600,6 +611,7 @@ int process_command(struct command_t *command) {
 
     }
 
+    //output redirection
     if(command->redirects[2]){ 
         int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND , 0644);
         if(fd < 0){ 
